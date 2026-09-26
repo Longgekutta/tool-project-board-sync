@@ -45,21 +45,74 @@ class ProjectsGraphQLClient:
   }}
 }}"""
 
+    def build_fetch_items_query(self, project_id: str, limit: int = 50) -> str:
+        return f"""query {{
+  node(id: "{project_id}") {{
+    ... on ProjectV2 {{
+      items(first: {limit}) {{
+        nodes {{
+          id
+          content {{
+            ... on DraftIssue {{
+              title
+              body
+            }}
+            ... on Issue {{
+              title
+              number
+            }}
+          }}
+          fieldValues(first: 10) {{
+            nodes {{
+              ... on ProjectV2ItemFieldSingleSelectValue {{
+                name
+              }}
+              ... on ProjectV2ItemFieldNumberValue {{
+                number
+              }}
+              ... on ProjectV2ItemFieldIterationValue {{
+                title
+              }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}"""
+
     def execute_query(self, query: str) -> GraphQLResponse:
         if self.dry_run or not self.token:
             # Deterministic hermetic simulation response
-            return GraphQLResponse(
-                success=True,
-                data={
+            if "items(first:" in query:
+                sim_data = {
+                    "node": {
+                        "items": {
+                            "nodes": [
+                                {
+                                    "id": "PVTI_mock_1",
+                                    "content": {"title": "[Todo] Setup CI Pipeline"},
+                                    "fieldValues": {"nodes": [{"name": "Todo"}, {"number": 3.0}, {"title": "Sprint 1"}]}
+                                },
+                                {
+                                    "id": "PVTI_mock_2",
+                                    "content": {"title": "[Done] Initialize Core Engine"},
+                                    "fieldValues": {"nodes": [{"name": "Done"}, {"number": 5.0}, {"title": "Sprint 1"}]}
+                                }
+                            ]
+                        }
+                    }
+                }
+            else:
+                sim_data = {
                     "addProjectV2DraftIssue": {
                         "projectItem": {"id": "PVTI_mock_item_id_12345"}
                     },
                     "updateProjectV2ItemFieldValue": {
                         "projectV2Item": {"id": "PVTI_mock_item_id_12345"}
                     }
-                },
-                raw_query=query
-            )
+                }
+            return GraphQLResponse(success=True, data=sim_data, raw_query=query)
 
         cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
         try:

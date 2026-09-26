@@ -113,6 +113,65 @@ def status_cmd(args) -> int:
     print(engine.export_kanban_markdown(view))
     return 0
 
+def pull_cmd(args) -> int:
+    token = os.environ.get("GITHUB_TOKEN") if args.live else None
+    client = ProjectsGraphQLClient(token=token, dry_run=not args.live)
+    engine = SyncEngine(client, project_id=args.project_id)
+
+    tasks = engine.pull_tasks(limit=args.limit)
+    print(f"[✔] Successfully pulled {len(tasks)} items from Project '{args.project_id}':")
+    for t in tasks:
+        iter_info = f" [Iteration: {t.iteration}]" if t.iteration else ""
+        est_info = f" ({t.estimate} pts)" if t.estimate is not None else ""
+        print(f"    - [{t.status.value}] {t.title}{iter_info}{est_info}")
+
+    if args.out:
+        out_p = Path(args.out).resolve()
+        view = engine.build_board_view("Pulled Project Board", tasks)
+        out_p.write_text(engine.export_kanban_markdown(view), encoding="utf-8")
+        print(f"[✔] Saved pulled board to {out_p}")
+    return 0
+
+def reconcile_cmd(args) -> int:
+    target_path = Path(args.target).resolve()
+    task_file = resolve_task_file(target_path)
+    tasks = parse_tasks_from_file(task_file)
+
+    token = os.environ.get("GITHUB_TOKEN") if args.live else None
+    client = ProjectsGraphQLClient(token=token, dry_run=not args.live)
+    engine = SyncEngine(client, project_id=args.project_id)
+
+    report = engine.reconcile(tasks, project_title=args.title)
+    print(f"[✔] Reconciled tasks against Project '{args.project_id}':")
+    print(f"    * Local tasks:    {report['local_total']}")
+    print(f"    * Remote tasks:   {report['remote_total']}")
+    print(f"    * Already in sync: {report['in_sync_count']}")
+    print(f"    * Newly pushed:   {report['newly_pushed']}")
+    return 0
+
+def burndown_cmd(args) -> int:
+    target_path = Path(args.target).resolve()
+    task_file = resolve_task_file(target_path)
+    tasks = parse_tasks_from_file(task_file)
+
+    client = ProjectsGraphQLClient(dry_run=True)
+    engine = SyncEngine(client)
+    view = engine.build_board_view("Sprint Metrics", tasks)
+    metrics = engine.export_sprint_burndown_summary(view)
+
+    if args.json:
+        print(json.dumps(metrics, indent=2))
+        return 0
+
+    print(f"📊 Sprint Burndown & Velocity Metrics for '{metrics['project_title']}':")
+    print(f"  * Total Tasks:        {metrics['total_tasks']}")
+    print(f"  * Done (Completed):   {metrics['done_tasks']}")
+    print(f"  * In Progress:        {metrics['in_progress_tasks']}")
+    print(f"  * Todo:               {metrics['todo_tasks']}")
+    print(f"  * Blocked:            {metrics['blocked_tasks']}")
+    print(f"  * Progress:           {metrics['completion_percentage']}%")
+    return 0
+
 def run_cmd(args) -> int:
     args.target = "."
     args.project_id = "PVT_kwDOB12345"
@@ -152,6 +211,25 @@ def main() -> int:
     p_sync.add_argument("--live", action="store_true", help="Execute live GraphQL mutations via gh CLI")
     p_sync.add_argument("--export", default=None, help="Export Kanban Markdown file path")
     p_sync.set_defaults(func=sync_cmd)
+
+    p_pull = subparsers.add_parser("pull", help="Pull items from GitHub Projects v2")
+    p_pull.add_argument("--project-id", default="PVT_kwDOB12345", help="GitHub Projects v2 Node ID")
+    p_pull.add_argument("--limit", type=int, default=50, help="Max items to fetch")
+    p_pull.add_argument("--live", action="store_true", help="Execute live GraphQL queries via gh CLI")
+    p_pull.add_argument("--out", default=None, help="Output markdown file path")
+    p_pull.set_defaults(func=pull_cmd)
+
+    p_rec = subparsers.add_parser("reconcile", help="Reconcile local tasks against GitHub Projects v2 board")
+    p_rec.add_argument("--target", default=".", help="Task file path or project directory")
+    p_rec.add_argument("--project-id", default="PVT_kwDOB12345", help="GitHub Projects v2 Node ID")
+    p_rec.add_argument("--title", default="Reconciled Tasks", help="Board title")
+    p_rec.add_argument("--live", action="store_true", help="Execute live GraphQL mutations via gh CLI")
+    p_rec.set_defaults(func=reconcile_cmd)
+
+    p_burn = subparsers.add_parser("burndown", help="Calculate sprint progress and velocity metrics")
+    p_burn.add_argument("--target", default=".", help="Task file path or project directory")
+    p_burn.add_argument("--json", action="store_true", help="Output metrics in JSON format")
+    p_burn.set_defaults(func=burndown_cmd)
 
     p_status = subparsers.add_parser("status", help="Print local task kanban board status")
     p_status.add_argument("--target", default=".", help="Task file path or project directory")

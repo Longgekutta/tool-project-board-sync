@@ -21,6 +21,9 @@ class TaskItem:
     assignee: Optional[str] = None
     labels: List[str] = field(default_factory=list)
     project_item_id: Optional[str] = None
+    iteration: Optional[str] = None
+    estimate: Optional[float] = None
+    priority: Optional[str] = None
 
 @dataclass
 class ProjectBoardView:
